@@ -2,11 +2,28 @@
 from playwright.sync_api import sync_playwright,TimeoutError
 from bs4 import BeautifulSoup
 from datetime import datetime
+from urllib.parse import urlparse
 import questionary
+import yt_dlp
 import gdown
+import logging
+import os
 
 BASE_URL = "https://puffytr.com"
 LOG_FILE = "error.log"
+DOWNLOAD_LOG_FILE = "donwload_error.log"
+UNSUPPORTED_PATH = "unsupported"
+if os.path.exists(UNSUPPORTED_PATH):
+    with open(UNSUPPORTED_PATH,"r") as f:
+        UNSUPPORTED = f.readlines()
+else:
+    UNSUPPORTED = []
+
+
+class UnLogger:
+    def debug(self, msg): pass
+    def warning(self, msg): pass
+    def error(self, msg): pass
 
 def log_warn(episode_url, message, **extra):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -18,6 +35,44 @@ def log_warn(episode_url, message, **extra):
         f.write(line + "\n")
     print(f"  [WARN] {message}")
 
+def log_err(file, message, **extra):
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    details = " | ".join(f"{k}={v}" for k, v in extra.items())
+    line = f"[{timestamp}] {message}"
+    if details:
+        line += f" | {details}"
+    with open(file, "a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    print(f"  [ERR] {message}")
+
+
+
+YDL_OPT = {'simulate': True,'quiet': True,'no_warnings': True, 'logger': UnLogger(),}
+YDL_OPT2 = {'format': 'bestvideo+bestaudio/best','outtmpl': None,'merge_output_format': 'mp4','quiet': True,'no_warnings': True}
+def check_video(url):
+    try:
+        with yt_dlp.YoutubeDL(YDL_OPT) as ydl:
+            ydl.extract_info(url, download=False)
+            return "ok"
+    except yt_dlp.utils.DownloadError as e:
+        error_msg = str(e).lower()
+        if any(kw in error_msg for kw in ['too many', 'quota', '403', 'forbidden']):
+            status = 'quota'
+        elif any(kw in error_msg for kw in ['removed', 'deleted', 'not found', '404', 'unavailable']):
+            status = 'removed'
+        elif any(kw in error_msg for kw in ['unsupported', 'no suitable', 'not supported', 'no longer supported']):
+            domain = urlparse(url).netloc
+            if domain not in UNSUPPORTED:
+                with open(UNSUPPORTED_PATH, "a", encoding="utf-8") as f:
+                    f.write(domain + "\n")
+                UNSUPPORTED.append(domain)
+            status = 'unsupported'
+        elif any(kw in error_msg for kw in ['timed out', 'unreachable', 'connection reset by peer']):
+            status = 'timedout'
+        else:
+            log_err(DOWNLOAD_LOG_FILE,f"Error at: {url} with {error_msg}")
+            status = 'error'
+        return status
 
 def extract_translators(page):
     html = page.content()
@@ -66,7 +121,7 @@ def fetch_video_links(page, translator_url, episode_url):
     return results
 
 
-def resolve_player_location(page, video_url, page_url, episode_url):
+def resolve_player_location(page, video_url, page_url, episode_url, video_name):
     player_url = video_url.replace("/video/", "/player/")
     try:
         resp = page.request.get(player_url, max_redirects=0, headers={
@@ -80,7 +135,12 @@ def resolve_player_location(page, video_url, page_url, episode_url):
     location = resp.headers.get("location")
     if not location:
         log_warn(episode_url, "Location header yok", player_url=player_url, status=resp.status)
-    return location
+    
+    if urlparse(location).netloc not in UNSUPPORTED:
+        stat = check_video(location)
+        if stat == "ok" or stat == "quota" and video_name == "GDrive":
+            return location
+    return None
 
 
 
@@ -110,7 +170,7 @@ class Browser:
         pass
 
     
-    def get_fileid(self,url,load_time=15,max_fail=15):
+    def get_videos(self,url,load_time=15):
         
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=load_time*1000)
@@ -132,7 +192,7 @@ class Browser:
             print(f"    {len(video_links)} video player bulundu")
 
             for video_url, video_name in video_links:
-                location = resolve_player_location(self.page, video_url, page_url, url)
+                location = resolve_player_location(self.page, video_url, page_url, url, video_name)
                 if location:
                     results.append((fansub_name, video_name, location))
                     print(f"    [{video_name}] -> {location}")
@@ -148,8 +208,14 @@ class Browser:
             except:
                 self.download_from_drive(identifier,file_path)
         else:
-            raise Exception("Unsupported Source")
-    
+            YDL_OPT2["outtmpl"] = file_path
+            try:
+                with yt_dlp.YoutubeDL(YDL_OPT2) as ydl:
+                    ydl.download([identifier])
+            except Exception:
+                log_err(DOWNLOAD_LOG_FILE,f"unable to donwload valid url: {identifier}")
+            YDL_OPT2["outtmpl"] = None
+            
     def download_from_drive(self, file_id, file_path):
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
@@ -175,17 +241,21 @@ class Browser:
         self.close()
 
 
-url = "https://puffytr.com/dungeon-meshi-23-bolum-izle"
-idx = 23 # TODO bolum no cek
+url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
+idx_offset = 23 # TODO bolum no cek
 url_list = []
-while url:
-    with Browser() as Anizim:
-        urls, next_url = Anizim.get_fileid(url)
-    donwload = questionary.select(f"Bolum {idx}: ", choices=[questionary.Choice(title=u, value=u) for u in urls]).ask()
-    url_list.append(donwload)
-    url = next_url
-    idx += 1
+with Browser() as Anizim:
+    while url:
+        urls, next_url = Anizim.get_videos(url)
+        url_list.append(urls)
+        url = next_url
 
+to_download = []
+for idx,videos in enumerate(url_list,start=idx_offset):
+    donwload = questionary.select(f"Bolum {idx}: ", choices=[questionary.Choice(title=u, value=u) for u in videos]).ask()
+    to_download.append(donwload)  
+
+print(to_download)
 with Browser() as downloader:
-    for idx,(fansub,player,url) in enumerate(url_list,start=1):
+    for idx,(fansub,player,url) in enumerate(to_download,start=1):
         downloader.download(url,str(idx)+".mp4",player)

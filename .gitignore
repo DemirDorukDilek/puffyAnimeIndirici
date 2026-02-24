@@ -1,2 +1,5 @@
 *.txt
 *.har
+unsupported
+*.log
+akame.py
