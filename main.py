@@ -6,13 +6,20 @@ from pathlib import Path
 import questionary
 import yt_dlp
 import gdown
+import json
 import sys
 import os
 import re
 
 
-WORKINGDIR = Path(os.getcwd()).expanduser()
-OUTPUTDIR = (WORKINGDIR/"out").expanduser()
+if not os.path.exists("conf.json"):
+    print("conf.json must be in current path")
+    exit(1)
+with open("conf.json") as f:
+    conf = json.load(f)
+    
+WORKINGDIR = Path(os.getcwd()).expanduser() if conf["WORKINGDIR"] == None else conf["WORKINGDIR"]
+OUTPUTDIR = (WORKINGDIR/"out").expanduser() if conf["OUTPUTDIR"] == None else conf["OUTPUTDIR"]
 LOGDIR = WORKINGDIR/"log"
 
 WORKINGDIR.mkdir(exist_ok=True)
@@ -24,9 +31,7 @@ DOWNLOAD_LOG_FILE = LOGDIR/"donwload_error.log"
 UNSUPPORTED_PATH = WORKINGDIR/"unsupported"
 DEBUGLEVEL = 100
 
-
-BASE_URL = "https://puffytr.com"
-
+BASE_URL = conf["BASE_URL"]
 
 if os.path.exists(UNSUPPORTED_PATH):
     with open(UNSUPPORTED_PATH,"r") as f:
@@ -275,6 +280,9 @@ class Ep:
 if DEBUGLEVEL > 0:
     url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
 else:
+    if sys.argv[1] == "-conf":
+        exec("nano conf.json")
+        exit(0)
     url = sys.argv[1]
     
 url_list = []
