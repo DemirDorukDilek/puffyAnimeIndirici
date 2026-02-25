@@ -29,7 +29,7 @@ LOGDIR.mkdir(exist_ok=True)
 WARN_LOG_FILE = LOGDIR/"warn.log"
 DOWNLOAD_LOG_FILE = LOGDIR/"donwload_error.log"
 UNSUPPORTED_PATH = WORKINGDIR/"unsupported"
-DEBUGLEVEL = 100
+DEBUGLEVEL = 0
 
 BASE_URL = conf["BASE_URL"]
 
