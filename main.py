@@ -1,18 +1,20 @@
-
-from playwright.sync_api import sync_playwright,TimeoutError
+from playwright.sync_api import sync_playwright
+from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from datetime import datetime
-from urllib.parse import urlparse
 from pathlib import Path
 import questionary
 import yt_dlp
 import gdown
+import sys
 import os
 import re
 
 LOG_FILE = "error.log"
 DOWNLOAD_LOG_FILE = "donwload_error.log"
 UNSUPPORTED_PATH = "unsupported"
+DEBUGLEVEL = 100
+
 
 BASE_URL = "https://puffytr.com"
 
@@ -31,6 +33,7 @@ class UnLogger:
     def error(self, msg): pass
 
 def log_warn(episode_url, message, **extra):
+    if DEBUGLEVEL < 20: return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(f"{k}={v}" for k, v in extra.items())
     line = f"[{timestamp}] episode={episode_url} | {message}"
@@ -41,6 +44,7 @@ def log_warn(episode_url, message, **extra):
     print(f"  [WARN] {message}")
 
 def log_err(file, message, **extra):
+    if DEBUGLEVEL < 10: return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(f"{k}={v}" for k, v in extra.items())
     line = f"[{timestamp}] {message}"
@@ -260,7 +264,11 @@ class Ep:
         self.videos = videos
         self.ep_title = ep_title
 
-url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
+if DEBUGLEVEL > 0:
+    url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
+else:
+    url = sys.argv[1]
+    
 url_list = []
 with Browser() as Anizim:
     while url:
@@ -273,7 +281,6 @@ for ep in url_list:
     donwload = questionary.select(f"{ep.ep_title}: ", choices=[questionary.Choice(title=u, value=u) for u in ep.videos]).ask()
     to_download.append((ep_title,donwload))
 
-print(to_download)
 with Browser() as downloader:
     for ep_title,(fansub,player,url) in to_download:
         downloader.download(url,str(OUTPUTDIR/(str(ep_title)+".mp4")),player)
