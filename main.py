@@ -3,16 +3,21 @@ from playwright.sync_api import sync_playwright,TimeoutError
 from bs4 import BeautifulSoup
 from datetime import datetime
 from urllib.parse import urlparse
+from pathlib import Path
 import questionary
 import yt_dlp
 import gdown
-import logging
 import os
+import re
 
-BASE_URL = "https://puffytr.com"
 LOG_FILE = "error.log"
 DOWNLOAD_LOG_FILE = "donwload_error.log"
 UNSUPPORTED_PATH = "unsupported"
+
+BASE_URL = "https://puffytr.com"
+
+OUTPUTDIR = Path("~/Desktop").expanduser()
+
 if os.path.exists(UNSUPPORTED_PATH):
     with open(UNSUPPORTED_PATH,"r") as f:
         UNSUPPORTED = f.readlines()
@@ -78,6 +83,14 @@ def extract_translators(page):
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
 
+    episode_title = None
+    title_tag = soup.find("h1", class_="anizm_pageTitle")
+    if title_tag:
+        span = title_tag.find("span")
+        if span:
+            raw = span.get_text(strip=True).lstrip("/ ").strip()
+            episode_title = re.sub(r'[\\/*?:"<>|\ ]', '_', raw)
+
     results = []
     for container in soup.find_all("div", class_="fansubSecimKutucugu"):
         for link in container.find_all("a", attrs={"translator": True}):
@@ -92,7 +105,7 @@ def extract_translators(page):
             next_ep = a.get("href")
             break
 
-    return results, next_ep
+    return results, next_ep, episode_title
 
 
 def fetch_video_links(page, translator_url, episode_url):
@@ -179,8 +192,10 @@ class Browser:
 
         page_url = self.page.url
         
-        translators, next_episode = extract_translators(self.page)
+        translators, next_episode, episode_title = extract_translators(self.page)
         print(f"[*] {len(translators)} translator bulundu")
+        if episode_title:
+            print(f"[*] Bolum adi: {episode_title}")
         if next_episode:
             print(f"[*] Sonraki bolum: {next_episode}")
 
@@ -197,7 +212,7 @@ class Browser:
                     results.append((fansub_name, video_name, location))
                     print(f"    [{video_name}] -> {location}")
         
-        return results,next_episode
+        return results, next_episode, episode_title
         
             
     def download(self,identifier,file_path,site="GDrive"):
@@ -240,22 +255,25 @@ class Browser:
     def __exit__(self, *args):
         self.close()
 
+class Ep:
+    def __init__(self,videos,ep_title):
+        self.videos = videos
+        self.ep_title = ep_title
 
 url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
-idx_offset = 23 # TODO bolum no cek
 url_list = []
 with Browser() as Anizim:
     while url:
-        urls, next_url = Anizim.get_videos(url)
-        url_list.append(urls)
+        urls, next_url,ep_title = Anizim.get_videos(url)
+        url_list.append(Ep(urls,ep_title))
         url = next_url
 
 to_download = []
-for idx,videos in enumerate(url_list,start=idx_offset):
-    donwload = questionary.select(f"Bolum {idx}: ", choices=[questionary.Choice(title=u, value=u) for u in videos]).ask()
-    to_download.append(donwload)  
+for ep in url_list:
+    donwload = questionary.select(f"{ep.ep_title}: ", choices=[questionary.Choice(title=u, value=u) for u in ep.videos]).ask()
+    to_download.append((ep_title,donwload))
 
 print(to_download)
 with Browser() as downloader:
-    for idx,(fansub,player,url) in enumerate(to_download,start=1):
-        downloader.download(url,str(idx)+".mp4",player)
+    for ep_title,(fansub,player,url) in to_download:
+        downloader.download(url,str(OUTPUTDIR/(str(ep_title)+".mp4")),player)

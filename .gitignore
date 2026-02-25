@@ -2,4 +2,4 @@
 *.har
 unsupported
 *.log
-akame.py
+akame*
