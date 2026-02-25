@@ -70,7 +70,16 @@ def log_err(file, message, **extra):
 
 
 YDL_OPT = {'simulate': True,'quiet': True,'no_warnings': True, 'logger': UnLogger(),}
-YDL_OPT2 = {'format': 'bestvideo+bestaudio/best','outtmpl': None,'merge_output_format': 'mp4','quiet': True,'no_warnings': True}
+YDL_OPT2 = {
+    'format': 'bestvideo+bestaudio/best',
+    'outtmpl': None,
+    'merge_output_format': 'mp4',
+    'quiet': True,
+    'no_warnings': True,
+    'external_downloader': 'aria2c',
+    'external_downloader_args': ['--min-split-size=1M', '--max-connection-per-server=16', '--split=16'],
+    'logger': UnLogger(),
+}
 def check_video(url):
     try:
         with yt_dlp.YoutubeDL(YDL_OPT) as ydl:
@@ -78,7 +87,7 @@ def check_video(url):
             return "ok"
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e).lower()
-        if any(kw in error_msg for kw in ['too many', 'quota', '403', 'forbidden']):
+        if any(kw in error_msg for kw in ['too many', 'quota']):
             status = 'quota'
         elif any(kw in error_msg for kw in ['removed', 'deleted', 'not found', '404', 'unavailable']):
             status = 'removed'
@@ -233,22 +242,22 @@ class Browser:
         
             
     def download(self,identifier,file_path,site="GDrive"):
-        if site == "GDrive":
-            try:
-                url = f"https://drive.google.com/file/d/{identifier}/view"
-                gdown.download(url=url, output=file_path, quiet=False)
-            except:
-                self.download_from_drive(identifier,file_path)
-        else:
-            YDL_OPT2["outtmpl"] = file_path
-            try:
-                with yt_dlp.YoutubeDL(YDL_OPT2) as ydl:
-                    ydl.download([identifier])
-            except Exception:
+        YDL_OPT2["outtmpl"] = file_path
+        try:
+            with yt_dlp.YoutubeDL(YDL_OPT2) as ydl:
+                ydl.download([identifier])
+        except Exception as e:
+            if site == "GDrive" and any(kw in str(e).lower() for kw in ['too many', 'quota']):
+                try:
+                    self.download_from_drive(identifier,file_path)
+                except:
+                    print("HTTP Error 429: Too Many Requests")    
+            else:
                 log_err(DOWNLOAD_LOG_FILE,f"unable to donwload valid url: {identifier}")
-            YDL_OPT2["outtmpl"] = None
+        YDL_OPT2["outtmpl"] = None
             
-    def download_from_drive(self, file_id, file_path):
+    def download_from_drive(self, identifier, file_path):
+        file_id = identifier.split("/")[-2]
         url = f"https://drive.google.com/uc?export=download&id={file_id}"
 
         self.page.goto(url, wait_until="domcontentloaded")
@@ -297,6 +306,6 @@ for ep in url_list:
     donwload = questionary.select(f"{ep.ep_title}: ", choices=[questionary.Choice(title=u, value=u) for u in ep.videos]).ask()
     to_download.append((ep_title,donwload))
 
-with Browser() as downloader:
+with Browser(True) as downloader:
     for ep_title,(fansub,player,url) in to_download:
         downloader.download(url,str(OUTPUTDIR/(str(ep_title)+".mp4")),player)
