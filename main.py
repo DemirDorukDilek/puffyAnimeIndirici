@@ -5,7 +5,6 @@ from datetime import datetime
 from pathlib import Path
 import questionary
 import yt_dlp
-import gdown
 import json
 import sys
 import os
@@ -71,9 +70,10 @@ def log_err(file, message, **extra):
 
 YDL_OPT = {'simulate': True,'quiet': True,'no_warnings': True, 'logger': UnLogger(),}
 YDL_OPT2 = {
-    'format': 'bestvideo+bestaudio/best',
+    'format': 'source/bestvideo+bestaudio/best',
     'outtmpl': None,
     'merge_output_format': 'mp4',
+    'remux_video': 'mp4',
     'quiet': True,
     'no_warnings': True,
     'external_downloader': 'aria2c',
@@ -287,7 +287,7 @@ class Ep:
         self.ep_title = ep_title
 
 if DEBUGLEVEL > 0:
-    url = "https://puffytr.com/dungeon-meshi-24-bolum-final-izle"
+    url = "https://puffytr.com/takopii-no-genzai-5-bolum-izle"
 else:
     if sys.argv[1] == "-conf":
         exec("nano conf.json")
@@ -304,7 +304,7 @@ with Browser() as Anizim:
 to_download = []
 for ep in url_list:
     donwload = questionary.select(f"{ep.ep_title}: ", choices=[questionary.Choice(title=u, value=u) for u in ep.videos]).ask()
-    to_download.append((ep_title,donwload))
+    to_download.append((ep.ep_title,donwload))
 
 with Browser(True) as downloader:
     for ep_title,(fansub,player,url) in to_download:
