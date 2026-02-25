@@ -10,15 +10,23 @@ import sys
 import os
 import re
 
-LOG_FILE = "error.log"
-DOWNLOAD_LOG_FILE = "donwload_error.log"
-UNSUPPORTED_PATH = "unsupported"
+
+WORKINGDIR = Path(os.getcwd()).expanduser()
+OUTPUTDIR = (WORKINGDIR/"out").expanduser()
+LOGDIR = WORKINGDIR/"log"
+
+WORKINGDIR.mkdir(exist_ok=True)
+OUTPUTDIR.mkdir(exist_ok=True)
+LOGDIR.mkdir(exist_ok=True)
+
+WARN_LOG_FILE = LOGDIR/"warn.log"
+DOWNLOAD_LOG_FILE = LOGDIR/"donwload_error.log"
+UNSUPPORTED_PATH = WORKINGDIR/"unsupported"
 DEBUGLEVEL = 100
 
 
 BASE_URL = "https://puffytr.com"
 
-OUTPUTDIR = Path("~/Desktop").expanduser()
 
 if os.path.exists(UNSUPPORTED_PATH):
     with open(UNSUPPORTED_PATH,"r") as f:
@@ -33,18 +41,17 @@ class UnLogger:
     def error(self, msg): pass
 
 def log_warn(episode_url, message, **extra):
-    if DEBUGLEVEL < 20: return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(f"{k}={v}" for k, v in extra.items())
     line = f"[{timestamp}] episode={episode_url} | {message}"
     if details:
         line += f" | {details}"
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
+    with open(WARN_LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+    if DEBUGLEVEL < 20: return
     print(f"  [WARN] {message}")
 
 def log_err(file, message, **extra):
-    if DEBUGLEVEL < 10: return
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     details = " | ".join(f"{k}={v}" for k, v in extra.items())
     line = f"[{timestamp}] {message}"
@@ -52,6 +59,7 @@ def log_err(file, message, **extra):
         line += f" | {details}"
     with open(file, "a", encoding="utf-8") as f:
         f.write(line + "\n")
+    if DEBUGLEVEL < 10: return
     print(f"  [ERR] {message}")
 
 
