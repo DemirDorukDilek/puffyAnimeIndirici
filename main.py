@@ -10,6 +10,8 @@ import sys
 import os
 import re
 
+from dataClass import *
+from style import *
 
 if not os.path.exists("conf.json"):
     print("conf.json must be in current path")
@@ -17,8 +19,8 @@ if not os.path.exists("conf.json"):
 with open("conf.json") as f:
     conf = json.load(f)
     
-WORKINGDIR = Path(os.getcwd()).expanduser() if conf["WORKINGDIR"] == None else conf["WORKINGDIR"]
-OUTPUTDIR = (WORKINGDIR/"out").expanduser() if conf["OUTPUTDIR"] == None else conf["OUTPUTDIR"]
+WORKINGDIR = Path(os.getcwd()).expanduser() if conf["WORKINGDIR"] == None else Path(conf["WORKINGDIR"])
+OUTPUTDIR = (WORKINGDIR/"out").expanduser() if conf["OUTPUTDIR"] == None else Path(conf["OUTPUTDIR"])
 LOGDIR = WORKINGDIR/"log"
 
 WORKINGDIR.mkdir(exist_ok=True)
@@ -53,7 +55,7 @@ def log_warn(episode_url, message, **extra):
     with open(WARN_LOG_FILE, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     if DEBUGLEVEL < 20: return
-    print(f"  [WARN] {message}")
+    warn(message)
 
 def log_err(file, message, **extra):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -64,7 +66,7 @@ def log_err(file, message, **extra):
     with open(file, "a", encoding="utf-8") as f:
         f.write(line + "\n")
     if DEBUGLEVEL < 10: return
-    print(f"  [ERR] {message}")
+    error(message)
 
 
 
@@ -105,7 +107,11 @@ def check_video(url):
             status = 'error'
         return status
 
-def extract_translators(page):
+def fetch_page_data(page,url):
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=15*1000)
+    except Exception as e:
+        warn("Sayfa yukleme timeout, devam ediliyor...")
     html = page.content()
     soup = BeautifulSoup(html, "html.parser")
 
@@ -117,69 +123,68 @@ def extract_translators(page):
             raw = span.get_text(strip=True).lstrip("/ ").strip()
             episode_title = re.sub(r'[\\/*?:"<>|\ ]', '_', raw)
 
-    results = []
+    
+    translators = []
     for container in soup.find_all("div", class_="fansubSecimKutucugu"):
         for link in container.find_all("a", attrs={"translator": True}):
-            translator_url = link.get("translator")
-            fansub_name = link.get("data-fansub-name", "Unknown")
-            if translator_url:
-                results.append((translator_url, fansub_name))
+            translator = Translator(link.get("data-fansub-name", "Unknown"), link.get("translator"))
+            if translator.url:
+                translators.append(translator)
 
     next_ep = None
     for a in soup.find_all("a", class_="puf_02"):
         if "Sonraki" in a.get_text():
             next_ep = a.get("href")
             break
+    
+    return PageData(episode_title,url,next_ep,translators,[])
 
-    return results, next_ep, episode_title
 
-
-def fetch_video_links(page, translator_url, episode_url):
-    resp = page.request.get(translator_url)
+def fetch_video_links(page, translator, episode_url):
+    resp = page.request.get(translator.url)
     if resp.status != 200:
-        log_warn(episode_url, "Translator request failed", translator_url=translator_url, status=resp.status)
+        log_warn(episode_url, "Translator request failed", translator_url=translator.url, status=resp.status)
         return []
 
     data = resp.json()
     if data.get("status") != "success":
-        log_warn(episode_url, "API status basarisiz", translator_url=translator_url, api_status=data.get("status"))
+        log_warn(episode_url, "API status basarisiz", translator_url=translator.url, api_status=data.get("status"))
         return []
 
     html_content = data.get("data", "")
     if not html_content:
-        log_warn(episode_url, "data key bos veya yok", translator_url=translator_url)
+        log_warn(episode_url, "data key bos veya yok", translator_url=translator.url)
         return []
 
     soup = BeautifulSoup(html_content, "html.parser")
-    results = []
+    videos = []
     for link in soup.find_all("a", attrs={"video": True}):
-        video_url = link.get("video")
-        video_name = link.get("data-video-name", "Unknown")
-        if video_url:
-            results.append((video_url, video_name))
-    return results
+        video = VideoData(link.get("data-video-name", "Unknown"),link.get("video").replace("/video/", "/player/"),None,"Unknown",translator)
+        if video.site_url:
+            videos.append(video)
+    return videos
 
 
-def resolve_player_location(page, video_url, page_url, episode_url, video_name):
-    player_url = video_url.replace("/video/", "/player/")
+def resolve_player_location(page, video, page_url, episode_url):
     try:
-        resp = page.request.get(player_url, max_redirects=0, headers={
+        resp = page.request.get(video.site_url, max_redirects=0, headers={
             "Referer": page_url,
             "Origin": BASE_URL,
         })
     except Exception as e:
-        log_warn(episode_url, "Player request failed", player_url=player_url, error=str(e))
+        log_warn(episode_url, "Player request failed", player_url=video.site_url, error=str(e))
         return None
 
-    location = resp.headers.get("location")
-    if not location:
-        log_warn(episode_url, "Location header yok", player_url=player_url, status=resp.status)
+    video.real_url = resp.headers.get("location")
     
-    if urlparse(location).netloc not in UNSUPPORTED:
-        stat = check_video(location)
-        if stat == "ok" or stat == "quota" and video_name == "GDrive":
-            return location
-    return None
+    if not video.real_url:
+        log_warn(episode_url, "Location header yok", player_url=video.site_url, status=resp.status)
+    
+    if urlparse(video.real_url).netloc not in UNSUPPORTED:
+        video.stat = check_video(video.real_url)
+        if video.stat == "ok" or (video.stat == "quota" and video.name == "GDrive"):
+            return True
+    return False
 
 
 
@@ -208,52 +213,61 @@ class Browser:
     def on_failed(self,req):
         pass
 
-    
-    def get_videos(self,url,load_time=15):
-        
+    def get_serie_info(self,url,load_time=15):
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=load_time*1000)
         except Exception:
-            print("[!] Sayfa yukleme timeout, devam ediliyor...")
+            warn("Sayfa yukleme timeout, devam ediliyor...")
+            
+        page_datas = []
+        next_url = url
+        while next_url:
+            page = fetch_page_data(self.page,next_url)
+            page_datas.append(page)
+            next_url = page.next_page
+        
+        return page_datas
+    
+    
+    def get_videos(self,url,page:PageData,load_time=15):
+        info(f"{C.WHITE}{page.title}{C.RST} icin video verileri aliniyor...")
+        try:
+            self.page.goto(url, wait_until="domcontentloaded", timeout=load_time*1000)
+        except Exception:
+            warn("Sayfa yukleme timeout, devam ediliyor...")
 
         page_url = self.page.url
-        
-        translators, next_episode, episode_title = extract_translators(self.page)
-        print(f"[*] {len(translators)} translator bulundu")
-        if episode_title:
-            print(f"[*] Bolum adi: {episode_title}")
-        if next_episode:
-            print(f"[*] Sonraki bolum: {next_episode}")
 
-        results = []
-        for translator_url, fansub_name in translators:
-            print(f"\n[*] Translator: {fansub_name}")
 
-            video_links = fetch_video_links(self.page, translator_url, url)
-            print(f"    {len(video_links)} video player bulundu")
+        valid_videos = []
+        for translator in page.translators:
+            videos = fetch_video_links(self.page, translator, url)
+            if videos:
+                success(f"{translator.name}: {C.BOLD}{len(videos)}{C.RST} player bulundu")
+            else:
+                dim(f"{translator.name}: player bulunamadi")
 
-            for video_url, video_name in video_links:
-                location = resolve_player_location(self.page, video_url, page_url, url, video_name)
-                if location:
-                    results.append((fansub_name, video_name, location))
-                    print(f"    [{video_name}] -> {location}")
-        
-        return results, next_episode, episode_title
+            for video in videos:
+                if resolve_player_location(self.page, video, page_url, url):
+                    valid_videos.append(video)
+
+        page.videos.extend(valid_videos)
         
             
-    def download(self,identifier,file_path,site="GDrive"):
+    def download(self,video,file_path,site="GDrive"):
         YDL_OPT2["outtmpl"] = file_path
         try:
-            with yt_dlp.YoutubeDL(YDL_OPT2) as ydl:
-                ydl.download([identifier])
-        except Exception as e:
-            if site == "GDrive" and any(kw in str(e).lower() for kw in ['too many', 'quota']):
-                try:
-                    self.download_from_drive(identifier,file_path)
-                except:
-                    print("HTTP Error 429: Too Many Requests")    
+            if video.stat == "ok":
+                with yt_dlp.YoutubeDL(YDL_OPT2) as ydl:
+                    ydl.download([video.real_url])
+            elif video.name == "GDrive" and video.stat == "quota":
+                self.download_from_drive(video.real_url,file_path)
             else:
-                log_err(DOWNLOAD_LOG_FILE,f"unable to donwload valid url: {identifier}")
+                raise Exception(f"Unvalid status at: {video.real_url} {video.stat}")
+                
+        except Exception as e:
+            log_err(DOWNLOAD_LOG_FILE,f"unable to donwload valid url: {video.real_url} {video.stat}")
+
         YDL_OPT2["outtmpl"] = None
             
     def download_from_drive(self, identifier, file_path):
@@ -281,31 +295,75 @@ class Browser:
     def __exit__(self, *args):
         self.close()
 
-class Ep:
-    def __init__(self,videos,ep_title):
-        self.videos = videos
-        self.ep_title = ep_title
 
 if DEBUGLEVEL > 0:
     url = "https://puffytr.com/takopii-no-genzai-5-bolum-izle"
 else:
     if sys.argv[1] == "-conf":
-        exec("nano conf.json")
+        os.system("nano conf.json")
         exit(0)
     url = sys.argv[1]
-    
-url_list = []
-with Browser() as Anizim:
-    while url:
-        urls, next_url,ep_title = Anizim.get_videos(url)
-        url_list.append(Ep(urls,ep_title))
-        url = next_url
 
+banner()
+
+# ── 1. Bolum bilgilerini al ─────────────────────────────
+step(1, 4, "Bolum bilgileri aliniyor...")
+with Browser() as Anizim:
+    pages = Anizim.get_serie_info(url)
+success(f"{C.BOLD}{len(pages)}{C.RST} bolum bulundu")
+bar()
+
+# ── 2. Indirilecek bolumleri sec ────────────────────────
+step(2, 4, "Indirilecek bolumleri sec")
+page_to_download = questionary.checkbox(
+    "",
+    [questionary.Choice(title=f"{page.title}", value=page) for page in pages],
+    instruction='("space" -> sec, "a" -> hepsini sec, "i" -> ters cevir)',
+    style=Q_STYLE
+).ask()
+
+if not page_to_download:
+    warn("Hicbir bolum secilmedi, cikiliyor.")
+    exit(0)
+
+info(f"{C.BOLD}{len(page_to_download)}{C.RST} bolum secildi")
+bar()
+
+# ── 3. Video kaynaklarini tara ──────────────────────────
+step(3, 4, "Video kaynaklari taraniyor...")
+with Browser() as Anizim:
+    for i, page in enumerate(page_to_download, 1):
+        dim(f"[{i}/{len(page_to_download)}] {page.title}")
+        Anizim.get_videos(page.url, page)
+bar()
+
+# ── 4. Kaynak sec & indir ──────────────────────────────
+step(4, 4, "Kaynak secimi & indirme")
 to_download = []
-for ep in url_list:
-    donwload = questionary.select(f"{ep.ep_title}: ", choices=[questionary.Choice(title=u, value=u) for u in ep.videos]).ask()
-    to_download.append((ep.ep_title,donwload))
+for page in page_to_download:
+    if len(page.videos):
+        pad = max(len(u.translator.name) for u in page.videos)
+        donwload = questionary.select(f"{C.CYAN}{page.title}{C.RST}:",[questionary.Choice(title=f"{u.translator.name.ljust(pad)}  |  {u.name}",value=u) for u in page.videos], style=Q_STYLE).ask()
+        to_download.append((page, donwload))
+    else:
+        warn(f"{page.title} icin video bulunamadi, atlaniyor")
+
+if not to_download:
+    error("Indirilecek video yok, cikiliyor.")
+    exit(0)
+
+bar()
+info(f"Indirme basliyor... ({C.BOLD}{len(to_download)}{C.RST} dosya)")
+print()
 
 with Browser(True) as downloader:
-    for ep_title,(fansub,player,url) in to_download:
-        downloader.download(url,str(OUTPUTDIR/(str(ep_title)+".mp4")),player)
+    for i, (page, video) in enumerate(to_download, 1):
+        file_name = str(page.title) + ".mp4"
+        info(f"[{i}/{len(to_download)}] {C.WHITE}{file_name}{C.RST} {C.GRAY}({video.translator.name} / {video.name}){C.RST}")
+        downloader.download(video, str(OUTPUTDIR / file_name), video.name)
+        success(f"{file_name} tamamlandi")
+
+print()
+bar("═")
+success(f"{C.BOLD}Tum indirmeler tamamlandi!{C.RST}")
+bar("═")
