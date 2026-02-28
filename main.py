@@ -1,4 +1,4 @@
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright,Page
 from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 from datetime import datetime
@@ -82,7 +82,7 @@ YDL_OPT2 = {
     'external_downloader_args': ['--min-split-size=1M', '--max-connection-per-server=16', '--split=16'],
     'logger': UnLogger(),
 }
-def check_video(url):
+def check_video(url:str) -> str:
     try:
         with yt_dlp.YoutubeDL(YDL_OPT) as ydl:
             ydl.extract_info(url, download=False)
@@ -107,7 +107,7 @@ def check_video(url):
             status = 'error'
         return status
 
-def fetch_page_data(page,url):
+def fetch_page_data(page:Page,url:str) -> PageData:
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=15*1000)
     except Exception as e:
@@ -140,7 +140,7 @@ def fetch_page_data(page,url):
     return PageData(episode_title,url,next_ep,translators,[])
 
 
-def fetch_video_links(page, translator, episode_url):
+def fetch_video_links(page:Page, translator:Translator, episode_url:str) -> List[VideoData]:
     resp = page.request.get(translator.url)
     if resp.status != 200:
         log_warn(episode_url, "Translator request failed", translator_url=translator.url, status=resp.status)
@@ -165,7 +165,7 @@ def fetch_video_links(page, translator, episode_url):
     return videos
 
 
-def resolve_player_location(page, video, page_url, episode_url):
+def resolve_player_location(page:Page, video:VideoData, page_url:str, episode_url:str) -> bool:
     try:
         resp = page.request.get(video.site_url, max_redirects=0, headers={
             "Referer": page_url,
@@ -213,7 +213,7 @@ class Browser:
     def on_failed(self,req):
         pass
 
-    def get_serie_info(self,url,load_time=15):
+    def get_serie_info(self,url:str,load_time:int=15) -> List[PageData]:
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=load_time*1000)
         except Exception:
@@ -229,7 +229,7 @@ class Browser:
         return page_datas
     
     
-    def get_videos(self,url,page:PageData,load_time=15):
+    def get_videos(self,url:str,page:PageData,load_time:int=15) -> None:
         info(f"{C.WHITE}{page.title}{C.RST} icin video verileri aliniyor...")
         try:
             self.page.goto(url, wait_until="domcontentloaded", timeout=load_time*1000)
@@ -254,7 +254,7 @@ class Browser:
         page.videos.extend(valid_videos)
         
             
-    def download(self,video,file_path,site="GDrive"):
+    def download(self,video:VideoData,file_path:str) -> None:
         YDL_OPT2["outtmpl"] = file_path
         try:
             if video.stat == "ok":
@@ -308,6 +308,7 @@ banner()
 
 # ── 1. Bolum bilgilerini al ─────────────────────────────
 step(1, 4, "Bolum bilgileri aliniyor...")
+dim("kisa bir sure surucek")
 with Browser() as Anizim:
     pages = Anizim.get_serie_info(url)
 success(f"{C.BOLD}{len(pages)}{C.RST} bolum bulundu")
@@ -331,6 +332,7 @@ bar()
 
 # ── 3. Video kaynaklarini tara ──────────────────────────
 step(3, 4, "Video kaynaklari taraniyor...")
+dim("bir sure surucek")
 with Browser() as Anizim:
     for i, page in enumerate(page_to_download, 1):
         dim(f"[{i}/{len(page_to_download)}] {page.title}")
@@ -367,3 +369,10 @@ print()
 bar("═")
 success(f"{C.BOLD}Tum indirmeler tamamlandi!{C.RST}")
 bar("═")
+
+
+
+
+
+
+
