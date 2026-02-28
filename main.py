@@ -30,13 +30,13 @@ LOGDIR.mkdir(exist_ok=True)
 WARN_LOG_FILE = LOGDIR/"warn.log"
 DOWNLOAD_LOG_FILE = LOGDIR/"donwload_error.log"
 UNSUPPORTED_PATH = WORKINGDIR/"unsupported"
-DEBUGLEVEL = 0
+DEBUGLEVEL = 100
 
 BASE_URL = conf["BASE_URL"]
 
 if os.path.exists(UNSUPPORTED_PATH):
     with open(UNSUPPORTED_PATH,"r") as f:
-        UNSUPPORTED = f.readlines()
+        UNSUPPORTED = f.read().split()
 else:
     UNSUPPORTED = []
 
@@ -343,7 +343,7 @@ to_download = []
 for page in page_to_download:
     if len(page.videos):
         pad = max(len(u.translator.name) for u in page.videos)
-        donwload = questionary.select(f"{C.CYAN}{page.title}{C.RST}:",[questionary.Choice(title=f"{u.translator.name.ljust(pad)}  |  {u.name}",value=u) for u in page.videos], style=Q_STYLE).ask()
+        donwload = questionary.select(f"{page.title}:",[questionary.Choice(title=f"{u.translator.name.ljust(pad)}  |  {u.name}",value=u) for u in page.videos], style=Q_STYLE).ask()
         to_download.append((page, donwload))
     else:
         warn(f"{page.title} icin video bulunamadi, atlaniyor")
