@@ -1,5 +1,12 @@
-otoselect ekle (guvenilen playerlere gore eger listede varsa kullaniciya sectirmek yerine oto sec)
 ilk kurulum için setup dosyası ekle
-ayarlar a oto seleçti açıp kapama özelliğie ekle
+kullanim kilavuzu ekle
 
 mutlithread download
+
+[x] otoselect ekle (guvenilen playerlere gore eger listede varsa kullaniciya sectirmek yerine oto sec)
+[x] ayarlar a oto seleçti açıp kapama özelliğie ekle
+[x] indirilcek bolumleri secme ekrani ekle
+[x] aria2c eklenmeli
+[x] global değişken ayarları ekle
+[x] cli desteği
+[x] bölüm adını siteden cek

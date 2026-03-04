@@ -1,5 +1,9 @@
 {
     "WORKINGDIR":null,
     "OUTPUTDIR":null,
-    "BASE_URL":"https://puffytr.com"
+    "BASE_URL":"https://puffytr.com",
+    "autoselect":true,
+    "select_mode":["fansub"],
+    "fansub_priority":[],
+    "player_priority":["GDrive"]
 }

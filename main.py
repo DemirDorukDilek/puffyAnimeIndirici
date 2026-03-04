@@ -9,6 +9,7 @@ import json
 import sys
 import os
 import re
+from collections import Counter
 
 from dataClass import *
 from style import *
@@ -33,6 +34,10 @@ UNSUPPORTED_PATH = WORKINGDIR/"unsupported"
 DEBUGLEVEL = 100
 
 BASE_URL = conf["BASE_URL"]
+AUTOSELECT = conf.get("autoselect", False)
+SELECT_MODES = conf.get("select_mode", ["fansub"])
+PLAYER_PRIORITY = conf.get("player_priority", [])
+FANSUB_PRIORITY = conf.get("fansub_priority", [])
 
 if os.path.exists(UNSUPPORTED_PATH):
     with open(UNSUPPORTED_PATH,"r") as f:
@@ -106,6 +111,68 @@ def check_video(url:str) -> str:
             log_err(DOWNLOAD_LOG_FILE,f"Error at: {url} with {error_msg}")
             status = 'error'
         return status
+
+def count_fansubs(all_pages:List[PageData]) -> Counter:
+    counts = Counter()
+    for page in all_pages:
+        for translator in page.translators:
+            counts[translator.name] += 1
+    return counts
+
+def priority_picker(videos:List[VideoData], priority:list, key) -> List[VideoData]:
+    for item in priority:
+        matched = [v for v in videos if key(v) == item]
+        if matched:
+            return matched
+    return []
+
+def _select_video(videos:List[VideoData], all_pages:List[PageData], mode:str) -> VideoData|None:
+    if mode == "fansub":
+        filtered = priority_picker(videos, FANSUB_PRIORITY, lambda v: v.translator.name)
+        if not filtered:
+            return None
+        result = priority_picker(filtered, PLAYER_PRIORITY, lambda v: v.name)
+        return result[0] if result else None
+
+    elif mode == "player":
+        filtered = priority_picker(videos, PLAYER_PRIORITY, lambda v: v.name)
+        if not filtered:
+            return None
+        result = priority_picker(filtered, FANSUB_PRIORITY, lambda v: v.translator.name)
+        return result[0] if result else None
+
+    elif mode == "majority":
+        counts = count_fansubs(all_pages)
+        available = set(v.translator.name for v in videos)
+        max_count = max((counts.get(f, 0) for f in available), default=0)
+        top = [f for f in available if counts.get(f, 0) == max_count]
+
+        if len(top) > 1:
+            chosen = None
+            for item in FANSUB_PRIORITY:
+                if item in top:
+                    chosen = item
+                    break
+            if not chosen:
+                chosen = sorted(top)[0]
+        else:
+            chosen = top[0]
+
+        filtered = [v for v in videos if v.translator.name == chosen]
+        result = priority_picker(filtered, PLAYER_PRIORITY, lambda v: v.name)
+        return result[0] if result else None
+
+    return None
+
+def video_selector(videos:List[VideoData], all_pages:List[PageData], modes:list) -> VideoData|None:
+    if not videos:
+        return None
+    for mode in modes:
+        result = _select_video(videos, all_pages, mode)
+        if result:
+            return result
+    return None
+
 
 def fetch_page_data(page:Page,url:str) -> PageData:
     try:
@@ -307,7 +374,7 @@ else:
 banner()
 
 # ── 1. Bolum bilgilerini al ─────────────────────────────
-step(1, 4, "Bolum bilgileri aliniyor...")
+step(1, 5, "Bolum bilgileri aliniyor...")
 dim("kisa bir sure surucek")
 with Browser() as Anizim:
     pages = Anizim.get_serie_info(url)
@@ -315,7 +382,7 @@ success(f"{C.BOLD}{len(pages)}{C.RST} bolum bulundu")
 bar()
 
 # ── 2. Indirilecek bolumleri sec ────────────────────────
-step(2, 4, "Indirilecek bolumleri sec")
+step(2, 5, "Indirilecek bolumleri sec")
 page_to_download = questionary.checkbox(
     "",
     [questionary.Choice(title=f"{page.title}", value=page) for page in pages],
@@ -331,7 +398,7 @@ info(f"{C.BOLD}{len(page_to_download)}{C.RST} bolum secildi")
 bar()
 
 # ── 3. Video kaynaklarini tara ──────────────────────────
-step(3, 4, "Video kaynaklari taraniyor...")
+step(3, 5, "Video kaynaklari taraniyor...")
 dim("bir sure surucek")
 with Browser() as Anizim:
     for i, page in enumerate(page_to_download, 1):
@@ -339,30 +406,92 @@ with Browser() as Anizim:
         Anizim.get_videos(page.url, page)
 bar()
 
-# ── 4. Kaynak sec & indir ──────────────────────────────
-step(4, 4, "Kaynak secimi & indirme")
-to_download = []
+# ── 4. Kaynak secimi ──────────────────────────────────
+step(4, 5, "Kaynak secimi")
+to_download = {}
+
+def user_selector(page:PageData) -> VideoData:
+    pad = max(len(u.translator.name) for u in page.videos)
+    return questionary.select(
+        f"{page.title}:",
+        [questionary.Choice(
+            title=f"{u.translator.name.ljust(pad)}  |  {u.name}",
+            value=u
+        ) for u in page.videos],
+        style=Q_STYLE
+    ).ask()
+
 for page in page_to_download:
-    if len(page.videos):
-        pad = max(len(u.translator.name) for u in page.videos)
-        donwload = questionary.select(f"{page.title}:",[questionary.Choice(title=f"{u.translator.name.ljust(pad)}  |  {u.name}",value=u) for u in page.videos], style=Q_STYLE).ask()
-        to_download.append((page, donwload))
-    else:
+    if not page.videos:
         warn(f"{page.title} icin video bulunamadi, atlaniyor")
+        continue
+
+    selected = None
+    if AUTOSELECT:
+        selected = video_selector(page.videos, page_to_download, SELECT_MODES)
+        if selected:
+            success(f"{page.title}: {C.BOLD}{selected.translator.name}{C.RST} | {selected.name} {C.GRAY}(oto){C.RST}")
+
+    if not selected:
+        selected = user_selector(page)
+
+    to_download[page] = selected
 
 if not to_download:
     error("Indirilecek video yok, cikiliyor.")
     exit(0)
 
 bar()
+
+# ── 5. Onay & indirme ────────────────────────────────
+step(5, 5, "Onay & indirme")
+
+def summary():
+    pad_title = max(len(p.title) for p in to_download)
+    pad_fansub = max(len(v.translator.name) for v in to_download.values())
+    print()
+    bar("═")
+    info(f"{C.BOLD}Indirme Ozeti{C.RST}")
+    bar("═")
+    for i, (page, video) in enumerate(to_download.items(), 1):
+        print(f"  {C.GRAY}{i:3}.{C.RST} {page.title.ljust(pad_title)}  {C.CYAN}{video.translator.name.ljust(pad_fansub)}{C.RST}  |  {video.name}")
+    bar()
+
+summary()
+
+while True:
+    action = questionary.select(
+        "",
+        [
+            questionary.Choice(title="Onayla & indir", value="ok"),
+            questionary.Choice(title="Bolum degistir", value="change"),
+        ],
+        style=Q_STYLE
+    ).ask()
+
+    if action == "ok":
+        break
+
+    pages_list = list(to_download.keys())
+    page_to_change = questionary.select(
+        "Hangi bolum?",
+        [questionary.Choice(title=p.title, value=p) for p in pages_list],
+        style=Q_STYLE
+    ).ask()
+
+    new_video = user_selector(page_to_change)
+    to_download[page_to_change] = new_video
+    summary()
+
+bar()
 info(f"Indirme basliyor... ({C.BOLD}{len(to_download)}{C.RST} dosya)")
 print()
 
 with Browser(True) as downloader:
-    for i, (page, video) in enumerate(to_download, 1):
+    for i, (page, video) in enumerate(to_download.items(), 1):
         file_name = str(page.title) + ".mp4"
         info(f"[{i}/{len(to_download)}] {C.WHITE}{file_name}{C.RST} {C.GRAY}({video.translator.name} / {video.name}){C.RST}")
-        downloader.download(video, str(OUTPUTDIR / file_name), video.name)
+        downloader.download(video, str(OUTPUTDIR / file_name))
         success(f"{file_name} tamamlandi")
 
 print()

@@ -22,3 +22,6 @@ class PageData:
     next_page:str
     translators:List[Translator]
     videos:List[VideoData]
+    
+    def __hash__(self):
+        return hash(self.url)
