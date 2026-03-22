@@ -7,3 +7,4 @@ log
 out
 __pycache__
 .vscode
+!requirements.txt
